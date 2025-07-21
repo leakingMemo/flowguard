@@ -1,0 +1,54 @@
+name: simple-task
+version: "1.0"
+description: "A simple task workflow for demonstration"
+initial_state: planning
+
+states:
+  - id: planning
+    name: "Planning"
+    description: "Planning the task"
+    required_context: |
+      📋 You are in the planning phase.
+      Think about what needs to be done and create a plan.
+      When ready, use 'start_work' to begin.
+    transitions:
+      start_work: working
+      
+  - id: working
+    name: "Working"
+    description: "Actively working on the task"
+    required_context: |
+      🔨 You are now working on the task.
+      Focus on implementation.
+      When complete, use 'complete_work' to finish.
+    transitions:
+      complete_work: reviewing
+      pause_work: paused
+      
+  - id: paused
+    name: "Paused"
+    description: "Work is paused"
+    required_context: |
+      ⏸️ Work is currently paused.
+      Use 'resume_work' when ready to continue.
+    transitions:
+      resume_work: working
+      
+  - id: reviewing
+    name: "Reviewing"
+    description: "Reviewing the completed work"
+    required_context: |
+      🔍 Time to review the work.
+      Check for quality and completeness.
+      Use 'approve' if satisfied or 'request_changes' if not.
+    transitions:
+      approve: done
+      request_changes: working
+      
+  - id: done
+    name: "Done"
+    description: "Task is complete"
+    required_context: |
+      ✅ Task completed successfully!
+      Great job!
+    transitions: {}
