@@ -1,0 +1,95 @@
+name: github-feature
+version: "1.0"
+description: "Workflow for developing GitHub features following best practices"
+initial_state: need_issue
+
+global_context: |
+  You are working on a GitHub feature. Follow the established workflow:
+  1. Create issue first
+  2. Create feature branch
+  3. Make changes
+  4. Create pull request
+  Never skip steps or work directly on main branch.
+
+states:
+  - id: need_issue
+    name: "Need Issue"
+    description: "Initial state - need to create GitHub issue"
+    required_context: |
+      ⚠️ You must create a GitHub issue before proceeding.
+      Use: gh issue create --title "..." --body "..."
+    transitions:
+      create_issue: has_issue
+      
+  - id: has_issue
+    name: "Issue Created"  
+    description: "GitHub issue exists, need to create branch"
+    required_context: |
+      ✓ Issue #{issue_number} created
+      Next: Create feature branch with pattern: feature/issue-{issue_number}-description
+      Use: git checkout -b feature/issue-{issue_number}-...
+    transitions:
+      create_branch: on_branch
+    prerequisites:
+      - issue_number
+      
+  - id: on_branch
+    name: "On Feature Branch"
+    description: "Working on feature branch"
+    required_context: |
+      ✓ Working on branch: {branch_name}
+      ✓ Issue #{issue_number}
+      You can now make changes. Remember to:
+      - Commit with issue reference: "... (#${issue_number})"
+      - Run tests before creating PR
+    transitions:
+      make_changes: changes_made
+    prerequisites:
+      - issue_number
+      - branch_name
+      
+  - id: changes_made
+    name: "Changes Committed"
+    description: "Changes made and committed"
+    required_context: |
+      ✓ Changes committed on branch: {branch_name}
+      ✓ Issue #{issue_number}
+      Ready to create pull request.
+      Use: gh pr create --title "..." --body "Fixes #{issue_number}"
+    transitions:
+      create_pr: pr_created
+      make_more_changes: changes_made
+    prerequisites:
+      - issue_number
+      - branch_name
+      
+  - id: pr_created
+    name: "Pull Request Created"
+    description: "PR created and ready for review"
+    required_context: |
+      ✓ Pull Request #{pr_number} created
+      ✓ Linked to Issue #{issue_number}
+      ✓ Branch: {branch_name}
+      PR is ready for review. You can:
+      - Address review comments
+      - Merge when approved
+    transitions:
+      address_feedback: changes_made
+      merge_pr: completed
+    prerequisites:
+      - issue_number
+      - branch_name
+      - pr_number
+      
+  - id: completed
+    name: "Feature Completed"
+    description: "Feature merged and complete"
+    required_context: |
+      ✅ Feature completed!
+      - Issue #{issue_number} resolved
+      - PR #{pr_number} merged
+      - Branch {branch_name} can be deleted
+    transitions: {}
+    prerequisites:
+      - issue_number
+      - pr_number
