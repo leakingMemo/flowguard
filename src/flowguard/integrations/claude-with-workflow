@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+"""
+FlowGuard-Claude Integration Script
+
+This script acts as a wrapper for the Claude CLI, automatically injecting
+FlowGuard workflow context when available. It checks for active workflows
+and passes their context to Claude via the --append-system-prompt flag.
+
+Usage:
+    claude-with-workflow [claude-cli-arguments]
+
+The script will:
+1. Check if FlowGuard is installed and available
+2. Look for an active workflow in the current context
+3. Extract workflow context and inject it into Claude
+4. Fall back to regular Claude if no workflow is active
+"""
+
+import os
+import sys
+import subprocess
+import json
+import argparse
+from pathlib import Path
+
+
+def get_flowguard_context():
+    """
+    Retrieve the current FlowGuard workflow context.
+    
+    Returns:
+        dict: Context information including workflow name, current state, 
+              variables, and relevant instructions
+        None: If no active workflow or FlowGuard not available
+    """
+    try:
+        # Try to import FlowGuard
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+        from flowguard import FlowGuardEngine
+        from flowguard.persistence import WorkflowPersistence
+        
+        # Initialize persistence to check for active workflows
+        persistence = WorkflowPersistence()
+        
+        # Get active workflow for current directory
+        current_dir = Path.cwd()
+        active_workflow = persistence.get_active_workflow(str(current_dir))
+        
+        if not active_workflow:
+            return None
+            
+        # Load the workflow file
+        workflow_file = Path(active_workflow['workflow_file'])
+        if not workflow_file.exists():
+            print(f"Warning: Workflow file not found: {workflow_file}", file=sys.stderr)
+            return None
+            
+        # Initialize engine and get current state
+        engine = FlowGuardEngine(str(workflow_file))
+        engine.load_state(active_workflow['instance_id'])
+        
+        # Build context information
+        context = {
+            'workflow_name': engine.workflow.name,
+            'workflow_description': engine.workflow.description,
+            'current_state': engine.current_state.name if engine.current_state else 'None',
+            'variables': engine.context,
+            'instance_id': active_workflow['instance_id']
+        }
+        
+        # Add current state instructions if available
+        if engine.current_state and engine.current_state.instructions:
+            context['current_instructions'] = engine.current_state.instructions
+            
+        # Add transitions from current state
+        if engine.current_state:
+            context['available_transitions'] = [
+                {
+                    'name': t.name,
+                    'to_state': t.to_state,
+                    'condition': str(t.condition) if t.condition else None
+                }
+                for t in engine.current_state.transitions
+            ]
+            
+        return context
+        
+    except ImportError:
+        print("Warning: FlowGuard not found in Python path", file=sys.stderr)
+        return None
+    except Exception as e:
+        print(f"Warning: Error getting FlowGuard context: {e}", file=sys.stderr)
+        return None
+
+
+def format_context_for_claude(context):
+    """
+    Format the FlowGuard context into a system prompt for Claude.
+    
+    Args:
+        context (dict): The workflow context
+        
+    Returns:
+        str: Formatted system prompt
+    """
+    prompt_parts = [
+        "# FlowGuard Workflow Context",
+        f"You are currently working within a FlowGuard workflow: '{context['workflow_name']}'",
+        ""
+    ]
+    
+    if context.get('workflow_description'):
+        prompt_parts.extend([
+            f"Workflow Description: {context['workflow_description']}",
+            ""
+        ])
+    
+    prompt_parts.extend([
+        f"Current State: {context['current_state']}",
+        f"Workflow Instance: {context['instance_id']}",
+        ""
+    ])
+    
+    if context.get('current_instructions'):
+        prompt_parts.extend([
+            "## Current State Instructions:",
+            context['current_instructions'],
+            ""
+        ])
+    
+    if context.get('variables'):
+        prompt_parts.extend([
+            "## Workflow Variables:",
+            json.dumps(context['variables'], indent=2),
+            ""
+        ])
+    
+    if context.get('available_transitions'):
+        prompt_parts.extend([
+            "## Available Transitions:",
+            ""
+        ])
+        for transition in context['available_transitions']:
+            t_desc = f"- {transition['name']} → {transition['to_state']}"
+            if transition['condition']:
+                t_desc += f" (condition: {transition['condition']})"
+            prompt_parts.append(t_desc)
+        prompt_parts.append("")
+    
+    prompt_parts.extend([
+        "## Instructions:",
+        "- Consider the current workflow state when providing assistance",
+        "- Respect the workflow constraints and available transitions",
+        "- Help the user progress through the workflow appropriately",
+        ""
+    ])
+    
+    return "\n".join(prompt_parts)
+
+
+def run_claude_with_context(context, claude_args):
+    """
+    Run Claude CLI with the FlowGuard context injected.
+    
+    Args:
+        context (dict): The workflow context
+        claude_args (list): Original Claude CLI arguments
+    """
+    # Format the context as a system prompt
+    system_prompt = format_context_for_claude(context)
+    
+    # Build the Claude command with appended system prompt
+    claude_cmd = ['claude'] + claude_args + ['--append-system-prompt', system_prompt]
+    
+    # Show user that workflow context is being used
+    print(f"🔄 Using FlowGuard workflow context: '{context['workflow_name']}' (state: {context['current_state']})")
+    print()
+    
+    # Run Claude with the modified command
+    result = subprocess.run(claude_cmd)
+    return result.returncode
+
+
+def run_claude_normal(claude_args):
+    """
+    Run Claude CLI normally without any modifications.
+    
+    Args:
+        claude_args (list): Original Claude CLI arguments
+    """
+    claude_cmd = ['claude'] + claude_args
+    result = subprocess.run(claude_cmd)
+    return result.returncode
+
+
+def main():
+    """Main entry point for the wrapper script."""
+    # Get all arguments passed to the script (these are meant for Claude)
+    claude_args = sys.argv[1:]
+    
+    # Check if user wants help specifically for this wrapper
+    if '--help-wrapper' in claude_args:
+        print(__doc__)
+        sys.exit(0)
+    
+    # Try to get FlowGuard context
+    context = get_flowguard_context()
+    
+    if context:
+        # Run Claude with workflow context
+        exit_code = run_claude_with_context(context, claude_args)
+    else:
+        # No active workflow, run Claude normally
+        if '--verbose' in claude_args or '-v' in claude_args:
+            print("ℹ️  No active FlowGuard workflow found, running Claude normally")
+            print()
+        exit_code = run_claude_normal(claude_args)
+    
+    sys.exit(exit_code)
+
+
+if __name__ == '__main__':
+    main()
