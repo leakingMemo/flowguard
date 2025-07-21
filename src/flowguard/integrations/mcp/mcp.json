@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "flowguard": {
+      "command": "python",
+      "args": ["-m", "flowguard.integrations.mcp.server"],
+      "env": {
+        "FLOWGUARD_WORKFLOWS_DIR": "~/.flowguard/workflows"
+      }
+    }
+  }
+}
